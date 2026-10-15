@@ -5,11 +5,11 @@ status: approved
 
 # Build Checklist
 
-Build mode: [learn or fast — record once chosen; carry forward on resume]
+Build mode: learn
 
 ## Slices
 
-- [ ] **1. The app runs and validates your inputs**
+- [x] **1. The app runs and validates your inputs**
   Becomes usable: A running Streamlit app with the title, description, notes box, exam-date picker, daily-hours input, a Generate Quiz button, and the empty-state hint. Clicking Generate with bad input shows the exact inline messages; nothing else happens yet. All project setup — dependencies, virtual environment, config, and git — lands here.
   Why now: Bootstrapping lives inside slice one. A running app with real input validation is the first end-to-end behavior, and it confirms the toolchain (Python 3.14 + Streamlit) installs cleanly before we depend on it.
   PRD ref: `prd.md > Input form and validation`; `prd.md > Screens and Layout` (empty state)

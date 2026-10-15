@@ -1,6 +1,7 @@
 """Tests for ai_client. The Gemini SDK is monkeypatched — no real API calls."""
 
 import json
+import os
 
 import pytest
 
@@ -33,13 +34,19 @@ class FakeClient:
 def install(monkeypatch, outcome, key="test-key"):
     """Replace the Gemini SDK client and env with deterministic fakes."""
     fake = FakeClient(outcome)
+    fake.client_calls = []
     monkeypatch.setattr(ai_client, "load_dotenv", lambda: None)
     if key is None:
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     else:
         monkeypatch.setenv("GEMINI_API_KEY", key)
-    monkeypatch.setattr(ai_client.genai, "Client", lambda api_key=None: fake)
+
+    def fake_client(*, api_key=None, http_options=None):
+        fake.client_calls.append({"api_key": api_key, "http_options": http_options})
+        return fake
+
+    monkeypatch.setattr(ai_client.genai, "Client", fake_client)
     return fake
 
 
@@ -77,6 +84,28 @@ def test_model_name_is_configurable(monkeypatch):
     assert fake.models.calls[0]["model"] == "gemini-2.5-flash"
 
 
+def test_model_name_loads_dotenv_before_reading(monkeypatch):
+    """A GEMINI_MODEL that only lives in `.env` must be loaded before it is read."""
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+
+    def fake_load_dotenv():
+        os.environ["GEMINI_MODEL"] = "gemini-from-dotenv"
+
+    monkeypatch.setattr(ai_client, "load_dotenv", fake_load_dotenv)
+    assert ai_client._model_name() == "gemini-from-dotenv"
+
+
+def test_model_name_does_not_override_existing_env(monkeypatch):
+    """An environment variable set by the OS keeps priority over `.env`."""
+    monkeypatch.setenv("GEMINI_MODEL", "os-provided-model")
+
+    def fake_load_dotenv():
+        os.environ.setdefault("GEMINI_MODEL", "gemini-from-dotenv")
+
+    monkeypatch.setattr(ai_client, "load_dotenv", fake_load_dotenv)
+    assert ai_client._model_name() == "os-provided-model"
+
+
 def test_config_requests_structured_json(monkeypatch):
     fake = install(monkeypatch, FakeResponse(text=json.dumps(_quiz_dict())))
     ai_client.generate_quiz("notes")
@@ -84,6 +113,15 @@ def test_config_requests_structured_json(monkeypatch):
     assert config.response_mime_type == "application/json"
     assert config.response_schema == ai_client.QUIZ_RESPONSE_SCHEMA
     assert config.temperature == ai_client.TEMPERATURE
+
+
+def test_client_uses_bounded_retries(monkeypatch):
+    fake = install(monkeypatch, FakeResponse(text=json.dumps(_quiz_dict())))
+    ai_client.generate_quiz("notes")
+    http_options = fake.client_calls[0]["http_options"]
+    assert http_options is not None
+    assert http_options.retry_options is not None
+    assert http_options.retry_options.attempts == ai_client.RETRY_ATTEMPTS == 4
 
 
 def test_malformed_json_raises(monkeypatch):

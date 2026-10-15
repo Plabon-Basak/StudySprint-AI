@@ -15,6 +15,7 @@ from google.genai import types
 
 DEFAULT_MODEL = "gemini-flash-latest"
 TEMPERATURE = 0.4
+RETRY_ATTEMPTS = 4
 
 QUIZ_RESPONSE_SCHEMA = {
     "type": "object",
@@ -67,6 +68,12 @@ class AiError(Exception):
 
 
 def _model_name():
+    """Return the configured model, loading `.env` first so it is never read stale.
+
+    `load_dotenv()` keeps its default (no override), so a `GEMINI_MODEL` set by
+    the operating system still wins over the value in `.env`.
+    """
+    load_dotenv()
     return os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
 
 
@@ -77,7 +84,12 @@ def _make_client():
         raise AiError(
             "No Gemini API key found. Add GEMINI_API_KEY to your .env file."
         )
-    return genai.Client(api_key=api_key)
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=RETRY_ATTEMPTS)
+        ),
+    )
 
 
 def _generate(schema, prompt, list_key):
