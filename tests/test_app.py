@@ -54,6 +54,24 @@ def _answer_all(at, letter="A"):
     return at
 
 
+def _answer_weak(at):
+    """Answer question 1 correctly and 2-5 wrongly, producing weak topics."""
+    at.radio(key="answer_1").set_value("Opt 1A")
+    for number in range(2, 6):
+        at.radio(key=f"answer_{number}").set_value(f"Opt {number}B")
+    return at.run()
+
+
+def _tasks_for(weak_topics):
+    """A fake `suggest_tasks` response that names each weak topic's task."""
+    return {
+        "tasks": [
+            {"topic": item["topic"], "task": f"Revise {item['topic']}"}
+            for item in weak_topics
+        ]
+    }
+
+
 def _generate(at, quiz=None):
     """Fill the form and generate a quiz, with the AI mocked."""
     with patch.object(ai_client, "generate_quiz", return_value=quiz or _valid_quiz()):
@@ -304,3 +322,182 @@ def test_schema_rejection_logs_reason_but_shows_generic_message(caplog):
     assert any("try again" in value.lower() for value in errors)
     assert at.session_state.get("quiz") is None
     assert "exactly 5 questions" in caplog.text
+
+
+def _submitted_schedule(at):
+    return at.session_state.get("schedule")
+
+
+def test_weak_submission_calls_suggest_tasks_once_and_renders_schedule():
+    at = _generate(_new_app())
+    _answer_weak(at)
+
+    with patch.object(ai_client, "suggest_tasks", side_effect=_tasks_for) as suggest:
+        at.button(key="submit").click().run()
+
+    weak = at.session_state.get("weak_topics")
+    assert weak  # questions 2-5 were wrong
+    assert suggest.call_count == 1
+    assert suggest.call_args.args[0] == weak
+
+    rows = _submitted_schedule(at)
+    assert rows
+    assert at.session_state.get("schedule_status") == "done"
+
+    text = _rendered_text(at)
+    assert "Your revision plan" in " ".join(s.value for s in at.subheader)
+    assert "Day 1" in text
+    assert "Revise Topic label 2" in text
+    assert "minutes" in text
+
+
+def test_schedule_starts_today_and_ends_before_exam():
+    at = _generate(_new_app())
+    exam_date = at.session_state.get("exam_date")
+    _answer_weak(at)
+
+    with patch.object(ai_client, "suggest_tasks", return_value={"tasks": []}):
+        at.button(key="submit").click().run()
+
+    rows = _submitted_schedule(at)
+    dates = sorted({row["date"] for row in rows})
+    assert dates[0] == date.today().isoformat()
+    assert all(row["date"] < exam_date.isoformat() for row in rows)
+
+
+def test_schedule_respects_the_daily_budget():
+    at = _generate(_new_app())
+    _answer_weak(at)
+
+    with patch.object(ai_client, "suggest_tasks", return_value={"tasks": []}):
+        at.button(key="submit").click().run()
+
+    rows = _submitted_schedule(at)
+    limit = int(round(at.session_state.get("hours") * 60))
+    minutes_per_day = {}
+    for row in rows:
+        minutes_per_day[row["day"]] = minutes_per_day.get(row["day"], 0) + row["minutes"]
+    assert minutes_per_day
+    assert all(total <= limit for total in minutes_per_day.values())
+
+
+def test_all_correct_skips_suggest_tasks_and_builds_review_plan():
+    at = _generate(_new_app())
+    _answer_all(at).run()
+
+    with patch.object(ai_client, "suggest_tasks", return_value={"tasks": []}) as suggest:
+        at.button(key="submit").click().run()
+
+    assert suggest.call_count == 0
+    assert at.session_state.get("schedule_status") == "done"
+
+    rows = _submitted_schedule(at)
+    assert rows
+    assert all(row["priority"] == "review" for row in rows)
+
+
+def test_task_call_failure_keeps_submission_and_uses_fallback():
+    at = _generate(_new_app())
+    _answer_weak(at)
+
+    with patch.object(ai_client, "suggest_tasks", side_effect=ai_client.AiError("quota")):
+        at.button(key="submit").click().run()
+
+    assert at.session_state.get("submitted") is True
+    assert at.session_state.get("schedule_status") == "fallback"
+
+    rows = _submitted_schedule(at)
+    assert rows
+    text = _rendered_text(at)
+    assert "Focused revision: Topic label 2" in text
+    assert "quota" not in text
+
+
+def test_regenerate_clears_previous_schedule():
+    at = _generate(_new_app())
+    _answer_weak(at)
+    with patch.object(ai_client, "suggest_tasks", return_value={"tasks": []}):
+        at.button(key="submit").click().run()
+    assert _submitted_schedule(at)
+
+    with patch.object(ai_client, "generate_quiz", return_value=_valid_quiz()):
+        _fill_valid_inputs(at)
+        at.button(key="generate").click().run()
+
+    assert at.session_state.get("schedule") is None
+    assert at.session_state.get("schedule_status") is None
+    assert "Your revision plan" not in " ".join(s.value for s in at.subheader)
+
+
+def _submit_all_correct(at):
+    """Generate is assumed done; answer everything and submit (AI mocked)."""
+    _answer_all(at).run()
+    with patch.object(ai_client, "suggest_tasks", return_value={"tasks": []}):
+        at.button(key="submit").click().run()
+    return at
+
+
+def test_start_over_resets_workflow_state():
+    at = _generate(_new_app())
+    _submit_all_correct(at)
+    assert at.session_state.get("submitted") is True
+    assert at.session_state.get("schedule")
+
+    at.button(key="start_over").click().run()
+
+    for key in (
+        "quiz",
+        "submitted",
+        "score",
+        "per_question",
+        "weak_topics",
+        "schedule",
+        "schedule_status",
+        "ui_error",
+        "errors",
+        "generate_pending",
+    ):
+        assert at.session_state.get(key) is None, key
+    for number in range(1, 6):
+        assert at.session_state.get(f"answer_{number}") is None, number
+
+    # Widget-backed inputs are back to their defaults.
+    assert at.session_state.get("notes") == ""
+    assert at.session_state.get("exam_date") == date.today() + timedelta(days=1)
+    assert at.session_state.get("hours") == 2.0
+
+
+def test_start_over_returns_to_initial_ui():
+    at = _generate(_new_app())
+    _submit_all_correct(at)
+    assert "Score:" in _rendered_text(at)
+
+    at.button(key="start_over").click().run()
+
+    assert len(at.radio) == 0
+    assert len(at.error) == 0
+    assert "Score:" not in _rendered_text(at)
+
+    subheaders = " ".join(s.value for s in at.subheader)
+    assert "Your quiz" not in subheaders
+    assert "Your results" not in subheaders
+    assert "Your revision plan" not in subheaders
+
+    assert any("after you generate your quiz" in info.value for info in at.info)
+    assert not any(button.key == "start_over" for button in at.button)
+
+
+def test_can_generate_a_fresh_quiz_after_start_over():
+    at = _generate(_new_app())
+    _submit_all_correct(at)
+    at.button(key="start_over").click().run()
+
+    with patch.object(ai_client, "generate_quiz", return_value=_valid_quiz()) as generate:
+        _fill_valid_inputs(at)
+        at.button(key="generate").click().run()
+
+    assert generate.call_count == 1
+    assert len(at.radio) == 5
+    assert at.session_state.get("submitted") is None
+    assert "Question number 1" in _rendered_text(at)
+    assert any(button.key == "start_over" for button in at.button)

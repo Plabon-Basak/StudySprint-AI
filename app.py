@@ -2,8 +2,8 @@
 
 Slice 5: the student answers the five questions and clicks Submit Answers.
 Valid submissions are graded in Python and show the score, correct answers with
-explanations, and weak topics; unanswered submissions are blocked. Revision
-scheduling and Start Over are not wired up yet.
+explanations, weak topics, and a day-by-day revision schedule; unanswered
+submissions are blocked. Start Over returns the whole run to its initial state.
 """
 
 import logging
@@ -15,6 +15,7 @@ import streamlit as st
 
 import ai_client
 import quiz_logic
+import schedule
 import validators
 
 LOGGER = logging.getLogger(__name__)
@@ -23,6 +24,10 @@ QUIZ_ERROR = "We couldn't build your quiz right now. Please try again in a momen
 SCHEMA_ERROR = "We couldn't build a usable quiz from those notes. Please try again."
 SUBMIT_ERROR = "Please answer all five questions before submitting."
 POSITIVE_RESULT = "Great work! No weak topics were identified in this quiz."
+SCHEDULE_EMPTY = (
+    "There are no study days before your exam date, so there is no revision "
+    "plan to show. Choose a later exam date and generate a new quiz."
+)
 HINT = (
     "Your personalized quiz, results, and revision plan will appear here "
     "after you generate your quiz."
@@ -64,10 +69,49 @@ def _on_generate():
     if not st.session_state["errors"]:
         st.session_state["quiz"] = None
         st.session_state["generate_pending"] = True
-        for key in ("submitted", "score", "per_question", "weak_topics"):
+        for key in (
+            "submitted",
+            "score",
+            "per_question",
+            "weak_topics",
+            "schedule",
+            "schedule_status",
+        ):
             st.session_state.pop(key, None)
         for number in range(1, quiz_logic.QUESTIONS_PER_QUIZ + 1):
             st.session_state.pop(f"answer_{number}", None)
+
+
+def _on_start_over():
+    """Reset the whole workflow to its initial empty state.
+
+    Runs as the button callback, before the page re-runs and before any widget is
+    instantiated. Removing the widget-backed keys here (`notes`, `exam_date`,
+    `hours`, and `answer_<n>`) is what returns the form to its defaults on the
+    next run — a keyed widget falls back to its default once its key is gone. No
+    widget key is ever reassigned after its widget exists in the same run.
+    """
+    keys = [
+        "notes",
+        "exam_date",
+        "hours",
+        "errors",
+        "ui_error",
+        "generate_pending",
+        "quiz",
+        "submitted",
+        "score",
+        "per_question",
+        "weak_topics",
+        "schedule",
+        "schedule_status",
+    ]
+    keys += [
+        f"answer_{number}"
+        for number in range(1, quiz_logic.QUESTIONS_PER_QUIZ + 1)
+    ]
+    for key in keys:
+        st.session_state.pop(key, None)
 
 
 def _log_failure():
@@ -123,11 +167,55 @@ def _selected_answers():
     return answers
 
 
+def _unique_topics(quiz):
+    """Return the quiz's topic labels in first-seen order, without repeats.
+
+    This is the full topic list the scheduler falls back to after the weak
+    topics, so a clean run still gets a balanced plan.
+    """
+    topics = []
+    seen = set()
+    for question in quiz:
+        topic = question["topic"]
+        if topic not in seen:
+            seen.add(topic)
+            topics.append(topic)
+    return topics
+
+
+def _build_schedule(quiz, weak_topics, exam_date, hours):
+    """Build the revision plan, degrading gracefully if the task call fails.
+
+    Returns (rows, status). Status is "fallback" only when Gemini was asked for
+    task text and that call failed; every other path is "done". Python always
+    produces a valid plan — the scheduler writes fallback task text when no
+    suggestion is available.
+    """
+    task_suggestions = []
+    status = "done"
+    if weak_topics:
+        try:
+            response = ai_client.suggest_tasks(weak_topics)
+            task_suggestions = response["tasks"]
+        except ai_client.AiError:
+            status = "fallback"
+    rows = schedule.build_schedule(
+        weak_topics,
+        _unique_topics(quiz),
+        task_suggestions,
+        exam_date,
+        date.today(),
+        hours,
+    )
+    return rows, status
+
+
 def _on_submit():
     """Grade the stored answers, or block with a message if any are missing.
 
-    Runs as the button callback, before the page re-runs. Grading happens exactly
-    once per click; ordinary reruns only read the stored results.
+    Runs as the button callback, before the page re-runs. Grading and the
+    revision plan happen exactly once per click; ordinary reruns only read the
+    stored results.
     """
     quiz = st.session_state.get("quiz")
     if not quiz:
@@ -137,9 +225,18 @@ def _on_submit():
         st.session_state["ui_error"] = SUBMIT_ERROR
         return
     score, per_question = quiz_logic.grade_quiz(quiz, answers)
+    weak_topics = quiz_logic.find_weak_topics(quiz, per_question)
+    rows, status = _build_schedule(
+        quiz,
+        weak_topics,
+        st.session_state.get("exam_date"),
+        st.session_state.get("hours"),
+    )
     st.session_state["score"] = score
     st.session_state["per_question"] = per_question
-    st.session_state["weak_topics"] = quiz_logic.find_weak_topics(quiz, per_question)
+    st.session_state["weak_topics"] = weak_topics
+    st.session_state["schedule"] = rows
+    st.session_state["schedule_status"] = status
     st.session_state["submitted"] = True
     st.session_state["ui_error"] = None
 
@@ -189,6 +286,30 @@ def _render_results(quiz):
             st.write(f"**{item['topic']}** — {item['mistakes']} mistake(s)")
     else:
         st.success(POSITIVE_RESULT)
+
+
+def _render_schedule():
+    """Show the day-by-day revision plan — the payoff of the whole run.
+
+    Every row comes from `schedule.build_schedule`, so the dates, day numbers,
+    and minutes are deterministic. A failed task-suggestion call still leaves a
+    complete plan with fallback task text; only a genuinely empty plan (no study
+    days before the exam) shows the explanatory message.
+    """
+    st.subheader("Your revision plan")
+    rows = st.session_state.get("schedule") or []
+    if not rows:
+        st.info(SCHEDULE_EMPTY)
+        return
+    if st.session_state.get("schedule_status") == "fallback":
+        st.caption("Showing suggested tasks. AI task ideas were unavailable.")
+    for row in rows:
+        with st.container(border=True):
+            st.markdown(f"**Day {row['day']} — {row['date']}**")
+            st.caption(
+                f"{row['topic']} · {row['priority']} · {row['minutes']} minutes"
+            )
+            st.write(row["task"])
 
 
 with st.container(border=True):
@@ -242,7 +363,9 @@ if quiz:
     _render_quiz(quiz)
     if st.session_state.get("submitted"):
         _render_results(quiz)
+        _render_schedule()
     else:
         st.button("Submit Answers", type="primary", key="submit", on_click=_on_submit)
+    st.button("Start Over", key="start_over", on_click=_on_start_over)
 elif not ui_error:
     st.info(HINT)
