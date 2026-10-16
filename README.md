@@ -123,28 +123,29 @@ The tests cover application behavior, quiz logic, input validation, AI client be
 
 ## Project Structure
 
-```text
-StudySprint AI/
-â”œâ”€â”€ app.py
-â”œâ”€â”€ ai_client.py
-â”œâ”€â”€ quiz_logic.py
-â”œâ”€â”€ schedule.py
-â”œâ”€â”€ validators.py
-â”œâ”€â”€ requirements.txt
-â”œâ”€â”€ .env.example
-â”œâ”€â”€ .gitignore
-â”œâ”€â”€ devpost/
-â”‚   â”œâ”€â”€ checklist.md
-â”‚   â”œâ”€â”€ prd.md
-â”‚   â”œâ”€â”€ scope.md
-â”‚   â””â”€â”€ spec.md
-â””â”€â”€ tests/
-    â”œâ”€â”€ test_ai_client.py
-    â”œâ”€â”€ test_app.py
-    â”œâ”€â”€ test_quiz_logic.py
-    â”œâ”€â”€ test_schedule.py
-    â””â”€â”€ test_validators.py
-```
+
+StudySprint-AI/
+├── app.py
+├── ai_client.py
+├── quiz_logic.py
+├── schedule.py
+├── validators.py
+├── requirements.txt
+├── .env.example
+├── .gitignore
+├── README.md
+├── devpost/
+│   ├── checklist.md
+│   ├── prd.md
+│   ├── scope.md
+│   └── spec.md
+└── tests/
+    ├── test_ai_client.py
+    ├── test_app.py
+    ├── test_quiz_logic.py
+    ├── test_schedule.py
+    └── test_validators.py
+
 
 ## Current Scope
 
