@@ -74,7 +74,7 @@ Open `.env` in your editor and set your own API key and preferred model:
 
 ```dotenv
 GEMINI_API_KEY=your-google-ai-studio-key
-GEMINI_MODEL=gemini-flash-latest
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
 Replace the placeholder with your own Google AI Studio API key. Use a Gemini model available to your API account.
@@ -165,5 +165,77 @@ These are future possibilities, not claims about current functionality.
 
 ## License
 
-No license has been specified yet. Check the repository's licensing requirements before reusing or redistributing the project.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## Run Locally
+
+### Requirements
+
+- Python 3.11 or later
+- A Google Gemini API key
+
+### Setup
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/Plabon-Basak/StudySprint-AI.git
+   cd StudySprint-AI
+   ```
+
+2. Create and activate a virtual environment:
+
+   **Windows PowerShell**
+
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux**
+
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+3. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Create a `.env` file in the project root and add your Gemini API key:
+
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key
+   GEMINI_MODEL=your_supported_gemini_model
+   ```
+
+   Replace the placeholder values with your own credentials and a model supported by your Google AI Studio project. Never commit your actual API key.
+
+5. Start the application:
+
+   ```bash
+   streamlit run app.py
+   ```
+
+## Testing
+
+Run the automated tests with:
+
+```bash
+pytest -q
+```
+
+## Deployment
+
+StudySprint AI is deployed on Streamlit Community Cloud:
+
+https://studysprint-ai-plabonbasak.streamlit.app/
+
+## Acknowledgments
+
+StudySprint AI uses Google's Gemini API to generate practice questions and support personalized study planning. Streamlit provides the web application interface.
+
 
