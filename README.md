@@ -123,7 +123,7 @@ The tests cover application behavior, quiz logic, input validation, AI client be
 
 ## Project Structure
 
-
+```text
 StudySprint-AI/
 ├── app.py
 ├── ai_client.py
@@ -145,7 +145,7 @@ StudySprint-AI/
     ├── test_quiz_logic.py
     ├── test_schedule.py
     └── test_validators.py
-
+```
 
 ## Current Scope
 
